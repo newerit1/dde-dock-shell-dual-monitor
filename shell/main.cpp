@@ -5,8 +5,12 @@
 #include <QApplication>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
+#include <QHash>
+#include <QScreen>
 #include <QStandardPaths>
+#include <QUuid>
 
+#include <DConfig>
 #include <DApplication>
 #include <DGuiApplicationHelper>
 #include <DLog>
@@ -17,6 +21,7 @@
 #include <iostream>
 
 #include "applet.h"
+#include "appletdata.h"
 #include "containment.h"
 #include "pluginloader.h"
 #include "appletloader.h"
@@ -24,6 +29,7 @@
 #include "shell.h"
 
 DS_USE_NAMESPACE
+DCORE_USE_NAMESPACE
 DGUI_USE_NAMESPACE
 DWIDGET_USE_NAMESPACE
 
@@ -52,26 +58,34 @@ public:
     explicit AppletManager(const QStringList &pluginIds)
     {
         qCDebug(dsLog) << "Preloading plugins:" << pluginIds;
-        auto rootApplet = qobject_cast<DContainment *>(DPluginLoader::instance()->rootApplet());
-        Q_ASSERT(rootApplet);
+        Q_ASSERT(qobject_cast<DContainment *>(DPluginLoader::instance()->rootApplet()));
+
+        m_dockConfig.reset(DConfig::create("org.deepin.dde.shell", "org.deepin.ds.dock", QString(), qApp));
+        if (m_dockConfig && m_dockConfig->isValid())
+            m_showOnAllScreens = m_dockConfig->value(QStringLiteral("Show_On_All_Screens"), false).toBool();
 
         for (const auto &pluginId : pluginIds) {
-            auto applet = rootApplet->createApplet(DAppletData{pluginId});
-            if (!applet) {
-                qCWarning(dsLog) << "Loading plugin failed:" << pluginId;
-                continue;
+            if (pluginId == dockPluginId() && m_showOnAllScreens) {
+                for (auto *screen : qApp->screens())
+                    addDockForScreen(screen);
+            } else {
+                createLoader(DAppletData{pluginId}, pluginIds);
             }
+        }
 
-            auto loader = new DAppletLoader(applet);
-            m_loaders << loader;
-
-            QObject::connect(loader, &DAppletLoader::failed, qApp, [this, loader, pluginIds](const QString &pluginId) {
-                if (pluginIds.contains(pluginId)) {
-                    m_loaders.removeOne(loader);
-                    loader->deleteLater();
-                }
+        if (m_dockConfig && m_dockConfig->isValid()) {
+            QObject::connect(m_dockConfig.data(), &DConfig::valueChanged, qApp, [this](const QString &key) {
+                if (key == QStringLiteral("Show_On_All_Screens"))
+                    setShowOnAllScreens(m_dockConfig->value(key, false).toBool());
             });
         }
+        QObject::connect(qApp, &QGuiApplication::screenAdded, qApp, [this](QScreen *screen) {
+            if (m_showOnAllScreens)
+                addDockForScreen(screen);
+        });
+        QObject::connect(qApp, &QGuiApplication::screenRemoved, qApp, [this](QScreen *screen) {
+            removeDockForScreen(screen);
+        });
     }
     void enableSceneview()
     {
@@ -83,6 +97,7 @@ public:
         for (auto loader : std::as_const(m_loaders)) {
             loader->exec();
         }
+        m_started = true;
     }
     void quit()
     {
@@ -91,6 +106,80 @@ public:
         }
     }
     QList<DAppletLoader *> m_loaders;
+
+private:
+    static QString dockPluginId() { return QStringLiteral("org.deepin.ds.dock"); }
+
+    DAppletLoader *createLoader(const DAppletData &data, const QStringList &rootPluginIds)
+    {
+        auto rootApplet = qobject_cast<DContainment *>(DPluginLoader::instance()->rootApplet());
+        auto applet = rootApplet->createApplet(data);
+        if (!applet) {
+            qCWarning(dsLog) << "Loading plugin failed:" << data.pluginId();
+            return nullptr;
+        }
+        auto loader = new DAppletLoader(applet);
+        m_loaders << loader;
+        QObject::connect(loader, &DAppletLoader::failed, qApp, [this, loader, rootPluginIds](const QString &pluginId) {
+            if (rootPluginIds.contains(pluginId)) {
+                m_loaders.removeOne(loader);
+                loader->deleteLater();
+            }
+        });
+        return loader;
+    }
+
+    void addDockForScreen(QScreen *screen)
+    {
+        if (!screen || m_dockLoaders.contains(screen))
+            return;
+        QVariantMap data;
+        data.insert(QStringLiteral("PluginId"), dockPluginId());
+        data.insert(QStringLiteral("Id"), QUuid::createUuid().toString(QUuid::WithoutBraces));
+        data.insert(QStringLiteral("DockMirror"), true);
+        data.insert(QStringLiteral("DockScreen"), screen->name());
+        data.insert(QStringLiteral("DockMirrorPrimary"), screen == qApp->primaryScreen());
+        if (auto *loader = createLoader(DAppletData(data), QStringList{dockPluginId()})) {
+            m_dockLoaders.insert(screen, loader);
+            if (m_started)
+                loader->exec();
+        }
+    }
+
+    void removeDockForScreen(QScreen *screen)
+    {
+        auto *loader = m_dockLoaders.take(screen);
+        if (!loader)
+            return;
+        if (auto *applet = loader->applet()) {
+            if (auto *rootApplet = qobject_cast<DContainment *>(applet->parentApplet()))
+                rootApplet->removeApplet(applet);
+        }
+        m_loaders.removeOne(loader);
+        loader->deleteLater();
+    }
+
+    void setShowOnAllScreens(bool enabled)
+    {
+        if (m_showOnAllScreens == enabled)
+            return;
+        m_showOnAllScreens = enabled;
+        const auto screens = m_dockLoaders.keys();
+        for (auto *screen : screens)
+            removeDockForScreen(screen);
+        if (m_showOnAllScreens) {
+            for (auto *screen : qApp->screens())
+                addDockForScreen(screen);
+        } else {
+            if (auto *loader = createLoader(DAppletData{dockPluginId()}, QStringList{dockPluginId()}))
+                loader->exec();
+        }
+    }
+
+    QHash<QScreen *, DAppletLoader *> m_dockLoaders;
+    QScopedPointer<DConfig> m_dockConfig;
+    bool m_showOnAllScreens = false;
+    bool m_started = false;
 };
 
 int main(int argc, char *argv[])

@@ -27,6 +27,7 @@ class DockSettings : public QObject
     Q_PROPERTY(IndicatorStyle indicatorStyle READ indicatorStyle WRITE setIndicatorStyle NOTIFY indicatorStyleChanged FINAL)
     Q_PROPERTY(QVariantMap pluginsVisible READ pluginsVisible WRITE setPluginsVisible NOTIFY pluginsVisibleChanged FINAL)
     Q_PROPERTY(bool showInPrimary READ showInPrimary WRITE setShowInPrimary NOTIFY showInPrimaryChanged FINAL)
+    Q_PROPERTY(bool showOnAllScreens READ showOnAllScreens WRITE setShowOnAllScreens NOTIFY showOnAllScreensChanged FINAL)
     Q_PROPERTY(bool locked READ locked WRITE setLocked NOTIFY lockedChanged FINAL)
 
 public:
@@ -39,6 +40,7 @@ public:
     IndicatorStyle indicatorStyle();
     QVariantMap pluginsVisible();
     bool showInPrimary() const;
+    bool showOnAllScreens() const;
     bool locked() const;
 
     void setDockSize(const uint& size);
@@ -48,6 +50,7 @@ public:
     void setIndicatorStyle(const IndicatorStyle& style);
     void setPluginsVisible(const QVariantMap & pluginsVisible);
     void setShowInPrimary(bool newShowInPrimary);
+    void setShowOnAllScreens(bool newShowOnAllScreens);
     void setLocked(bool newLocked);
 
 private:
@@ -75,6 +78,7 @@ Q_SIGNALS:
     void pluginsVisibleChanged(const QVariantMap &pluginsVisible);
 
     void showInPrimaryChanged(bool showInPrimary);
+    void showOnAllScreensChanged(bool showOnAllScreens);
     void lockedChanged(bool locked);
 
 private:
@@ -89,6 +93,7 @@ private:
     IndicatorStyle m_style;
     QVariantMap m_pluginsVisible;
     bool m_showInPrimary;
+    bool m_showOnAllScreens;
     bool m_locked;
 };
 }
