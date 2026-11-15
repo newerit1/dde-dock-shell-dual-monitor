@@ -6,8 +6,10 @@
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QHash>
+#include <QPointer>
 #include <QScreen>
 #include <QStandardPaths>
+#include <QTimer>
 #include <QUuid>
 
 #include <DConfig>
@@ -80,8 +82,13 @@ public:
             });
         }
         QObject::connect(qApp, &QGuiApplication::screenAdded, qApp, [this](QScreen *screen) {
-            if (m_showOnAllScreens)
-                addDockForScreen(screen);
+            if (!m_showOnAllScreens)
+                return;
+            QPointer<QScreen> pendingScreen(screen);
+            QTimer::singleShot(500, qApp, [this, pendingScreen] {
+                if (pendingScreen && m_showOnAllScreens && qApp->screens().contains(pendingScreen))
+                    addDockForScreen(pendingScreen);
+            });
         });
         QObject::connect(qApp, &QGuiApplication::screenRemoved, qApp, [this](QScreen *screen) {
             removeDockForScreen(screen);
